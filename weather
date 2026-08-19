@@ -1,0 +1,922 @@
+from flask import Flask, request, render_template_string
+import requests
+
+app = Flask(__name__)
+
+# WEATHER DESCRIPTION
+
+def weather_description(code):
+
+    weather_codes = {
+        0: ("☀️", "Clear sky"),
+        1: ("🌤️", "Mainly clear"),
+        2: ("⛅", "Partly cloudy"),
+        3: ("☁️", "Overcast"),
+        45: ("🌫️", "Fog"),
+        48: ("🌫️", "Rime fog"),
+        51: ("🌦️", "Light drizzle"),
+        53: ("🌦️", "Moderate drizzle"),
+        55: ("🌧️", "Dense drizzle"),
+        61: ("🌦️", "Slight rain"),
+        63: ("🌧️", "Moderate rain"),
+        65: ("🌧️", "Heavy rain"),
+        71: ("🌨️", "Slight snow"),
+        73: ("🌨️", "Moderate snow"),
+        75: ("❄️", "Heavy snow"),
+        80: ("🌦️", "Rain showers"),
+        81: ("🌧️", "Moderate rain showers"),
+        82: ("🌧️", "Heavy rain showers"),
+        95: ("⛈️", "Thunderstorm"),
+        96: ("⛈️", "Thunderstorm with hail"),
+        99: ("⛈️", "Thunderstorm with heavy hail")
+    }
+
+    return weather_codes.get(
+        code,
+        ("🌤️", "Unknown weather")
+    )
+
+# FIND CITY
+
+def get_coordinates(city):
+
+    url = "https://geocoding-api.open-meteo.com/v1/search"
+
+    params = {
+        "name": city,
+        "count": 10,
+        "language": "en",
+        "format": "json"
+    }
+
+    try:
+
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        results = data.get("results", [])
+
+        if not results:
+            return None
+
+        # Prefer Indian locations
+        for result in results:
+
+            country = result.get(
+                "country",
+                ""
+            ).lower()
+
+            state = result.get(
+                "admin1",
+                ""
+            ).lower()
+
+            name = result.get(
+                "name",
+                ""
+            ).lower()
+
+            if country == "india":
+
+                if (
+                    "karnataka" in state
+                    or name in ["bangalore", "bengaluru"]
+                ):
+
+                    return result
+
+        # Otherwise use an Indian result
+        for result in results:
+
+            if result.get(
+                "country",
+                ""
+            ).lower() == "india":
+
+                return result
+
+        return results[0]
+
+    except requests.RequestException:
+
+        return None
+
+# GET WEATHER
+
+def get_weather(latitude, longitude):
+
+    url = "https://api.open-meteo.com/v1/forecast"
+
+    params = {
+
+        "latitude": latitude,
+
+        "longitude": longitude,
+
+        "current": (
+            "temperature_2m,"
+            "relative_humidity_2m,"
+            "apparent_temperature,"
+            "precipitation,"
+            "weather_code,"
+            "wind_speed_10m"
+        ),
+
+        "daily": (
+            "weather_code,"
+            "temperature_2m_max,"
+            "temperature_2m_min,"
+            "precipitation_probability_max"
+        ),
+
+        "timezone": "auto",
+
+        "forecast_days": 7
+    }
+
+    try:
+
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except requests.RequestException:
+
+        return None
+
+# ONE PYTHON FILE FRONTEND
+
+HTML = """
+
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<title>Weather App</title>
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+
+    margin: 0;
+
+    font-family: Arial, sans-serif;
+
+    min-height: 100vh;
+
+    background:
+        linear-gradient(
+            135deg,
+            #1e3c72,
+            #2a5298
+        );
+
+    color: white;
+
+    padding: 40px 20px;
+}
+
+.container {
+
+    max-width: 1000px;
+
+    margin: auto;
+}
+
+h1 {
+
+    text-align: center;
+
+    font-size: 42px;
+}
+
+.subtitle {
+
+    text-align: center;
+
+    opacity: 0.8;
+
+    margin-bottom: 30px;
+}
+
+.search {
+
+    display: flex;
+
+    max-width: 650px;
+
+    margin: auto;
+
+    gap: 10px;
+}
+
+.search input {
+
+    flex: 1;
+
+    padding: 16px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    font-size: 16px;
+
+    outline: none;
+}
+
+.search button {
+
+    padding: 16px 25px;
+
+    border: none;
+
+    border-radius: 10px;
+
+    background: white;
+
+    color: #1e3c72;
+
+    font-weight: bold;
+
+    cursor: pointer;
+}
+
+.error {
+
+    margin: 25px auto;
+
+    max-width: 650px;
+
+    background: #ffdddd;
+
+    color: #990000;
+
+    padding: 15px;
+
+    border-radius: 10px;
+
+    text-align: center;
+}
+
+.location {
+
+    text-align: center;
+
+    margin-top: 35px;
+}
+
+.location h2 {
+
+    margin-bottom: 5px;
+
+    font-size: 30px;
+}
+
+.location p {
+
+    opacity: 0.8;
+}
+
+.current {
+
+    margin-top: 25px;
+
+    padding: 35px;
+
+    text-align: center;
+
+    border-radius: 20px;
+
+    background:
+        rgba(255,255,255,0.15);
+
+    backdrop-filter: blur(10px);
+}
+
+.icon {
+
+    font-size: 75px;
+}
+
+.temperature {
+
+    font-size: 55px;
+
+    font-weight: bold;
+
+    margin: 10px;
+}
+
+.condition {
+
+    font-size: 22px;
+
+    margin-bottom: 30px;
+}
+
+.details {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    gap: 15px;
+}
+
+.detail {
+
+    padding: 20px;
+
+    border-radius: 15px;
+
+    background:
+        rgba(255,255,255,0.12);
+}
+
+.detail-icon {
+
+    font-size: 28px;
+}
+
+.detail-title {
+
+    margin: 8px 0;
+
+    opacity: 0.7;
+}
+
+.detail-value {
+
+    font-size: 18px;
+
+    font-weight: bold;
+}
+
+.forecast-title {
+
+    text-align: center;
+
+    margin-top: 40px;
+}
+
+.forecast {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(7, 1fr);
+
+    gap: 10px;
+}
+
+.day {
+
+    padding: 18px 8px;
+
+    text-align: center;
+
+    border-radius: 15px;
+
+    background:
+        rgba(255,255,255,0.15);
+}
+
+.day-icon {
+
+    font-size: 32px;
+
+    margin: 12px;
+}
+
+.day-condition {
+
+    font-size: 12px;
+
+    min-height: 30px;
+}
+
+.day-temp {
+
+    font-weight: bold;
+
+    margin-top: 10px;
+}
+
+.rain {
+
+    font-size: 12px;
+
+    margin-top: 8px;
+
+    opacity: 0.8;
+}
+
+@media(max-width: 800px) {
+
+    .forecast {
+
+        grid-template-columns:
+            repeat(3, 1fr);
+    }
+
+    .details {
+
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+}
+
+@media(max-width: 500px) {
+
+    .search {
+
+        flex-direction: column;
+    }
+
+    .forecast {
+
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+<h1>🌤️ Real-Time Weather</h1>
+
+<div class="subtitle">
+
+Search any city for current weather
+and a 7-day forecast
+
+</div>
+
+
+<form class="search" method="POST">
+
+<input
+    type="text"
+    name="city"
+    placeholder="Enter city name..."
+    required
+>
+
+<button type="submit">
+
+🔍 Search
+
+</button>
+
+</form>
+
+
+{% if error %}
+
+<div class="error">
+
+❌ {{ error }}
+
+</div>
+
+{% endif %}
+
+
+{% if weather %}
+
+
+<div class="location">
+
+<h2>
+
+📍 {{ location.name }}
+
+</h2>
+
+<p>
+
+{{ location.admin1 }},
+{{ location.country }}
+
+</p>
+
+</div>
+
+
+<div class="current">
+
+
+<div class="icon">
+
+{{ current.icon }}
+
+</div>
+
+
+<div class="temperature">
+
+{{ current.temperature }} °C
+
+</div>
+
+
+<div class="condition">
+
+{{ current.description }}
+
+</div>
+
+
+<div class="details">
+
+
+<div class="detail">
+
+<div class="detail-icon">
+
+🌡️
+
+</div>
+
+<div class="detail-title">
+
+Feels Like
+
+</div>
+
+<div class="detail-value">
+
+{{ current.feels_like }} °C
+
+</div>
+
+</div>
+
+
+<div class="detail">
+
+<div class="detail-icon">
+
+💧
+
+</div>
+
+<div class="detail-title">
+
+Humidity
+
+</div>
+
+<div class="detail-value">
+
+{{ current.humidity }}%
+
+</div>
+
+</div>
+
+
+<div class="detail">
+
+<div class="detail-icon">
+
+💨
+
+</div>
+
+<div class="detail-title">
+
+Wind Speed
+
+</div>
+
+<div class="detail-value">
+
+{{ current.wind }} km/h
+
+</div>
+
+</div>
+
+
+<div class="detail">
+
+<div class="detail-icon">
+
+🌧️
+
+</div>
+
+<div class="detail-title">
+
+Precipitation
+
+</div>
+
+<div class="detail-value">
+
+{{ current.precipitation }} mm
+
+</div>
+
+</div>
+
+
+</div>
+
+</div>
+
+
+<h2 class="forecast-title">
+
+📅 7-Day Forecast
+
+</h2>
+
+
+<div class="forecast">
+
+
+{% for day in forecast %}
+
+<div class="day">
+
+<b>
+
+{{ day.day }}
+
+</b>
+
+<br>
+
+<small>
+
+{{ day.date }}
+
+</small>
+
+
+<div class="day-icon">
+
+{{ day.icon }}
+
+</div>
+
+
+<div class="day-condition">
+
+{{ day.description }}
+
+</div>
+
+
+<div class="day-temp">
+
+{{ day.min }}°C -
+{{ day.max }}°C
+
+</div>
+
+
+<div class="rain">
+
+🌧️ Rain:
+{{ day.rain }}%
+
+</div>
+
+</div>
+
+{% endfor %}
+
+
+</div>
+
+
+{% endif %}
+
+</div>
+
+</body>
+
+</html>
+
+"""
+
+# FLASK ROUTE
+
+@app.route("/", methods=["GET", "POST"])
+def home():
+
+    weather = None
+
+    location = None
+
+    current = None
+
+    forecast = None
+
+    error = None
+
+
+    if request.method == "POST":
+
+        city = request.form.get(
+            "city",
+            ""
+        ).strip()
+
+
+        if not city:
+
+            error = "Please enter a city name."
+
+        else:
+
+            location = get_coordinates(city)
+
+
+            if location is None:
+
+                error = "City not found."
+
+
+            else:
+
+                weather = get_weather(
+
+                    location["latitude"],
+
+                    location["longitude"]
+
+                )
+
+
+                if weather is None:
+
+                    error = (
+                        "Failed to fetch weather data."
+                    )
+
+                    weather = None
+
+
+                else:
+
+                    # Current weather
+
+                    current_data = weather["current"]
+
+                    icon, description = (
+                        weather_description(
+                            current_data[
+                                "weather_code"
+                            ]
+                        )
+                    )
+
+
+                    current = {
+
+                        "icon": icon,
+
+                        "description": description,
+
+                        "temperature":
+                            current_data[
+                                "temperature_2m"
+                            ],
+
+                        "feels_like":
+                            current_data[
+                                "apparent_temperature"
+                            ],
+
+                        "humidity":
+                            current_data[
+                                "relative_humidity_2m"
+                            ],
+
+                        "wind":
+                            current_data[
+                                "wind_speed_10m"
+                            ],
+
+                        "precipitation":
+                            current_data[
+                                "precipitation"
+                            ]
+                    }
+
+
+                    # 7-day forecast
+
+                    daily = weather["daily"]
+
+                    forecast = []
+
+
+                    for i in range(
+                        len(daily["time"])
+                    ):
+
+                        icon, description = (
+                            weather_description(
+                                daily[
+                                    "weather_code"
+                                ][i]
+                            )
+                        )
+
+
+                        forecast.append({
+
+                            "day":
+                                daily[
+                                    "time"
+                                ][i],
+
+                            "date":
+                                daily[
+                                    "time"
+                                ][i],
+
+                            "icon": icon,
+
+                            "description":
+                                description,
+
+                            "min":
+                                daily[
+                                    "temperature_2m_min"
+                                ][i],
+
+                            "max":
+                                daily[
+                                    "temperature_2m_max"
+                                ][i],
+
+                            "rain":
+                                daily[
+                                    "precipitation_probability_max"
+                                ][i]
+
+                        })
+
+
+    return render_template_string(
+
+        HTML,
+
+        weather=weather,
+
+        location=location,
+
+        current=current,
+
+        forecast=forecast,
+
+        error=error
+
+    )
+
+# START SERVER
+if __name__ == "__main__":
+
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )
